@@ -1,0 +1,17 @@
+# Web Scraping & HTTP Requests
+requests
+beautifulsoup4
+lxml
+
+# Environment & Configuration
+python-dotenv
+
+# Logging
+google-cloud-logging
+
+# Web Framework & Server
+Flask
+gunicorn
+
+# Email Notifications
+sendgrid
