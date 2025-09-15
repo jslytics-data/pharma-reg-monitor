@@ -22,10 +22,13 @@ def _format_header_section() -> str:
     date_str = datetime.now().strftime("%A, %B %d, %Y")
     return f"""
     <tr>
-        <td style="padding: 30px; text-align: center;">
-            <p style="font-size: 32px; margin: 0;">🔬</p>
-            <h1 style="font-size: 24px; color: #2c3e50; margin: 10px 0 5px 0; font-weight: 400;">Daily Regulatory Intelligence Report</h1>
-            <p style="font-size: 14px; color: #7f8c8d; margin: 0;">{date_str}</p>
+        <td style="padding: 40px 20px; text-align: center; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border-radius: 12px 12px 0 0;">
+            <h1 style="font-size: 28px; color: #ffffff; margin: 0; font-weight: 600; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;">
+                PharmaReg Intelligence
+            </h1>
+            <p style="font-size: 14px; color: rgba(255,255,255,0.9); margin: 8px 0 0 0; font-weight: 400;">
+                {date_str}
+            </p>
         </td>
     </tr>
     """
@@ -44,30 +47,40 @@ def _format_dmf_section(aggregated_results: Dict) -> str:
         formatted_date = date_obj.strftime('%B %d, %Y')
 
         if days_since_update <= 5:
-            icon = "🔔"
-            bg_color = "#fffbeb"
-            border_color = "#facc15"
-            title = "New FDA DMF List Published"
-            text_color = "#b45309"
+            icon = "🆕"
+            bg_color = "#fef3c7"
+            border_color = "#fbbf24"
+            status_text = "Recently Updated"
+            text_color = "#92400e"
         else:
-            icon = "✅"
-            bg_color = "#f8f9fa"
-            border_color = "#e0e0e0"
-            title = "FDA DMF List Status"
-            text_color = "#555555"
+            icon = "📋"
+            bg_color = "#f9fafb"
+            border_color = "#e5e7eb"
+            status_text = "Current Status"
+            text_color = "#6b7280"
         
         return f"""
         <tr>
-            <td style="padding: 0 30px 20px 30px;">
-                <table border="0" cellpadding="0" cellspacing="0" width="100%" style="border-collapse: collapse; background-color: {bg_color}; border-radius: 8px; border: 1px solid {border_color};">
+            <td style="padding: 24px 20px;">
+                <table border="0" cellpadding="0" cellspacing="0" width="100%" style="border-collapse: collapse;">
                     <tr>
-                        <td style="padding: 15px 20px; font-size: 24px; vertical-align: middle; width: 40px;">{icon}</td>
-                        <td style="padding: 15px 20px; vertical-align: middle;">
-                            <h3 style="margin: 0; font-size: 16px; color: {text_color}; font-weight: 500;">{title}</h3>
-                            <p style="margin: 4px 0 0 0; font-size: 14px; color: #555555;">
-                                Last Updated: <strong>{formatted_date}</strong>
-                                <a href="{dmf_url}" target="_blank" style="margin-left: 15px; color: #005a9c; text-decoration: none;">View Page &rarr;</a>
-                            </p>
+                        <td style="background-color: {bg_color}; border: 1px solid {border_color}; border-radius: 12px; padding: 16px;">
+                            <table border="0" cellpadding="0" cellspacing="0" width="100%">
+                                <tr>
+                                    <td width="32" style="font-size: 20px; padding-right: 12px;">{icon}</td>
+                                    <td>
+                                        <p style="margin: 0; font-size: 12px; color: {text_color}; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;">
+                                            FDA DMF LIST • {status_text}
+                                        </p>
+                                        <p style="margin: 4px 0 0 0; font-size: 14px; color: #374151;">
+                                            Last updated: {formatted_date}
+                                            <a href="{dmf_url}" target="_blank" style="color: #667eea; text-decoration: none; font-weight: 500; margin-left: 8px;">
+                                                View →
+                                            </a>
+                                        </p>
+                                    </td>
+                                </tr>
+                            </table>
                         </td>
                     </tr>
                 </table>
@@ -78,137 +91,289 @@ def _format_dmf_section(aggregated_results: Dict) -> str:
         return ""
 
 def _format_summary_section(aggregated_results: Dict) -> str:
-    source_info = {'edqm': '🇪🇺 EDQM', 'cdsco': '🇮🇳 CDSCO', 'fda': '🇺🇸 FDA'}
-    summary_lines = []
+    sources = []
+    total = 0
+    
+    source_info = {
+        'edqm': {'icon': '🇪🇺', 'name': 'EDQM', 'color': '#3b82f6'},
+        'cdsco': {'icon': '🇮🇳', 'name': 'CDSCO', 'color': '#f59e0b'},
+        'fda': {'icon': '🇺🇸', 'name': 'FDA', 'color': '#ef4444'}
+    }
+    
     for source, data in aggregated_results.items():
         if isinstance(data, list) and data:
             count = len(data)
-            name = source_info.get(source, source.upper())
-            summary_lines.append(f'<span style="font-size: 16px; color: #2c3e50; margin-right: 20px;"><strong>{count}</strong> {name}</span>')
+            total += count
+            info = source_info.get(source, {'icon': '', 'name': source.upper(), 'color': '#6b7280'})
+            sources.append(f"""
+                <td style="text-align: center; padding: 0 8px;">
+                    <div style="font-size: 24px; margin-bottom: 4px;">{info['icon']}</div>
+                    <div style="font-size: 28px; font-weight: 700; color: {info['color']}; margin-bottom: 2px;">{count}</div>
+                    <div style="font-size: 11px; color: #6b7280; text-transform: uppercase; letter-spacing: 0.5px;">{info['name']}</div>
+                </td>
+            """)
     
-    if not summary_lines:
-        return ""
+    if not sources:
+        return """
+        <tr>
+            <td style="padding: 24px 20px;">
+                <div style="background-color: #f9fafb; border-radius: 12px; padding: 32px; text-align: center;">
+                    <p style="font-size: 16px; color: #6b7280; margin: 0;">No new updates today</p>
+                </div>
+            </td>
+        </tr>
+        """
         
     return f"""
     <tr>
-        <td style="padding: 0 30px 30px 30px;">
-            <table border="0" cellpadding="0" cellspacing="0" width="100%" style="border-collapse: collapse; background-color: #ffffff; border-radius: 8px; border: 1px solid #e0e0e0;">
-                <tr>
-                    <td style="padding: 20px;">
-                        <h2 style="font-size: 16px; color: #2c3e50; margin: 0 0 10px 0;">Updates by Source:</h2>
-                        {''.join(summary_lines)}
-                    </td>
-                </tr>
-            </table>
+        <td style="padding: 0 20px 24px 20px;">
+            <div style="background-color: #fafafa; border-radius: 12px; padding: 24px;">
+                <p style="font-size: 14px; color: #6b7280; margin: 0 0 16px 0; text-align: center; text-transform: uppercase; letter-spacing: 0.5px; font-weight: 600;">
+                    Today's Updates
+                </p>
+                <table border="0" cellpadding="0" cellspacing="0" width="100%">
+                    <tr>
+                        {''.join(sources)}
+                    </tr>
+                </table>
+            </div>
         </td>
     </tr>
     """
 
 def _format_edqm_section(data: List[Dict]) -> str:
     sorted_data = _sort_data_by_date(data, 'issue_date_cep')
-    header_html = f"""
-    <h2 style="font-size: 20px; color: #005a9c; margin: 0; font-weight: 500;">
-        <span style="font-size: 24px; vertical-align: middle;">🇪🇺</span> EDQM Certificates of Suitability
-        <span style="display: inline-block; background-color: #005a9c; color: #ffffff; font-size: 12px; font-weight: bold; padding: 4px 10px; border-radius: 12px; margin-left: 10px;">{len(data)} New</span>
-    </h2>
-    <hr style="border: 0; border-top: 2px solid #005a9c; margin: 15px 0;">
-    """
     
     rows_html = ""
-    for item in sorted_data:
+    for i, item in enumerate(sorted_data):
         try:
             date_obj = datetime.strptime(item.get('issue_date_cep'), '%Y-%m-%d')
-            formatted_date = date_obj.strftime('%b %d,<br>%Y')
+            formatted_date = date_obj.strftime('%b %d')
         except (ValueError, TypeError):
-            formatted_date = item.get('issue_date_cep', 'N/A').replace('-', '<br>')
+            formatted_date = 'N/A'
 
         holder = item.get('certificate_holder', 'N/A')
         substance = item.get('substance', 'N/A')
         cert_num = item.get('certificate_number', 'N/A')
         
+        bg_color = "#ffffff" if i % 2 == 0 else "#fafafa"
+        
         rows_html += f"""
-        <tr>
-            <td style="padding: 15px 10px; vertical-align: top; width: 15%; font-size: 14px; color: #555555; border-bottom: 1px solid #eeeeee;">{formatted_date}</td>
-            <td style="padding: 15px 10px; vertical-align: top; width: 40%; font-size: 14px; border-bottom: 1px solid #eeeeee;">
-                <a href="https://www.google.com/search?q={quote_plus(holder)}" target="_blank" style="color: #005a9c; text-decoration: none; font-weight: 500;">{holder}</a>
+        <tr style="background-color: {bg_color};">
+            <td style="padding: 12px 16px; font-size: 13px; color: #6b7280; white-space: nowrap;">
+                {formatted_date}
             </td>
-            <td style="padding: 15px 10px; vertical-align: top; width: 20%; font-size: 14px; color: #555555; border-bottom: 1px solid #eeeeee;">{substance}</td>
-            <td style="padding: 15px 10px; vertical-align: top; width: 25%; font-size: 13px; color: #777777; font-family: monospace; text-align: right; border-bottom: 1px solid #eeeeee;">{cert_num}</td>
+            <td style="padding: 12px 16px; font-size: 14px;">
+                <a href="https://www.google.com/search?q={quote_plus(holder)}" target="_blank" style="color: #374151; text-decoration: none; font-weight: 500;">
+                    {holder[:40]}{'...' if len(holder) > 40 else ''}
+                </a>
+            </td>
+            <td style="padding: 12px 16px; font-size: 13px; color: #6b7280;">
+                {substance[:25]}{'...' if len(substance) > 25 else ''}
+            </td>
+            <td style="padding: 12px 16px; font-size: 11px; color: #9ca3af; font-family: 'Courier New', monospace; text-align: right;">
+                {cert_num[:15]}{'...' if len(cert_num) > 15 else ''}
+            </td>
         </tr>
         """
         
-    return f'<tr><td style="padding: 0 30px 30px 30px;">{header_html}<table border="0" cellpadding="0" cellspacing="0" width="100%" style="border-collapse: collapse;">{rows_html}</table></td></tr>'
+    header_html = f"""
+    <div style="padding: 20px 20px 0 20px;">
+        <table border="0" cellpadding="0" cellspacing="0" width="100%">
+            <tr>
+                <td>
+                    <h2 style="font-size: 18px; color: #1f2937; margin: 0; font-weight: 600;">
+                        🇪🇺 EDQM Certificates
+                    </h2>
+                </td>
+                <td style="text-align: right;">
+                    <span style="background-color: #3b82f6; color: #ffffff; font-size: 12px; font-weight: 600; padding: 4px 12px; border-radius: 999px;">
+                        {len(data)} NEW
+                    </span>
+                </td>
+            </tr>
+        </table>
+    </div>
+    """
+    
+    return f"""
+    <tr>
+        <td style="padding-bottom: 24px;">
+            {header_html}
+            <div style="margin: 16px 20px 0 20px; border-radius: 8px; overflow: hidden; border: 1px solid #e5e7eb;">
+                <table border="0" cellpadding="0" cellspacing="0" width="100%" style="border-collapse: collapse;">
+                    <thead>
+                        <tr style="background-color: #f9fafb; border-bottom: 1px solid #e5e7eb;">
+                            <th style="padding: 10px 16px; text-align: left; font-size: 11px; font-weight: 600; color: #6b7280; text-transform: uppercase;">Date</th>
+                            <th style="padding: 10px 16px; text-align: left; font-size: 11px; font-weight: 600; color: #6b7280; text-transform: uppercase;">Holder</th>
+                            <th style="padding: 10px 16px; text-align: left; font-size: 11px; font-weight: 600; color: #6b7280; text-transform: uppercase;">Substance</th>
+                            <th style="padding: 10px 16px; text-align: right; font-size: 11px; font-weight: 600; color: #6b7280; text-transform: uppercase;">Cert #</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {rows_html}
+                    </tbody>
+                </table>
+            </div>
+        </td>
+    </tr>
+    """
 
 def _format_cdsco_section(data: List[Dict]) -> str:
     sorted_data = _sort_data_by_date(data, 'release_date')
-    header_html = f"""
-    <h2 style="font-size: 20px; color: #D68910; margin: 0; font-weight: 500;">
-        <span style="font-size: 24px; vertical-align: middle;">🇮🇳</span> CDSCO Written Confirmations
-        <span style="display: inline-block; background-color: #D68910; color: #ffffff; font-size: 12px; font-weight: bold; padding: 4px 10px; border-radius: 12px; margin-left: 10px;">{len(data)} New</span>
-    </h2>
-    <hr style="border: 0; border-top: 2px solid #D68910; margin: 15px 0;">
-    """
     
     rows_html = ""
-    for item in sorted_data:
+    for i, item in enumerate(sorted_data):
         try:
             date_obj = datetime.strptime(item.get('release_date'), '%Y-%m-%d')
-            formatted_date = date_obj.strftime('%b %d,<br>%Y')
+            formatted_date = date_obj.strftime('%b %d')
         except (ValueError, TypeError):
-            formatted_date = item.get('release_date', 'N/A').replace('-', '<br>')
+            formatted_date = 'N/A'
 
         company = item.get('company_name', 'N/A')
         products = item.get('products', 'N/A')
-        if len(products) > 70:
-            products = products[:67] + "..."
+        if len(products) > 40:
+            products = products[:37] + "..."
+
+        bg_color = "#ffffff" if i % 2 == 0 else "#fafafa"
 
         rows_html += f"""
-        <tr>
-            <td style="padding: 15px 10px; vertical-align: top; width: 15%; font-size: 14px; color: #555555; border-bottom: 1px solid #eeeeee;">{formatted_date}</td>
-            <td style="padding: 15px 10px; vertical-align: top; width: 40%; font-size: 14px; border-bottom: 1px solid #eeeeee;">
-                <a href="https://www.google.com/search?q={quote_plus(company)}" target="_blank" style="color: #005a9c; text-decoration: none; font-weight: 500;">{company}</a>
+        <tr style="background-color: {bg_color};">
+            <td style="padding: 12px 16px; font-size: 13px; color: #6b7280; white-space: nowrap;">
+                {formatted_date}
             </td>
-            <td style="padding: 15px 10px; vertical-align: top; font-size: 14px; color: #555555; border-bottom: 1px solid #eeeeee;">{products}</td>
-            <td style="padding: 15px 10px; vertical-align: top; width: 15%; text-align: right; border-bottom: 1px solid #eeeeee;">
-                <a href="{item.get('download_pdf_link', '#')}" target="_blank" style="font-size: 13px; font-weight: bold; color: #D68910; text-decoration: none;">View PDF</a>
+            <td style="padding: 12px 16px; font-size: 14px;">
+                <a href="https://www.google.com/search?q={quote_plus(company)}" target="_blank" style="color: #374151; text-decoration: none; font-weight: 500;">
+                    {company[:35]}{'...' if len(company) > 35 else ''}
+                </a>
+            </td>
+            <td style="padding: 12px 16px; font-size: 13px; color: #6b7280;">
+                {products}
+            </td>
+            <td style="padding: 12px 16px; text-align: right;">
+                <a href="{item.get('download_pdf_link', '#')}" target="_blank" style="color: #f59e0b; text-decoration: none; font-size: 12px; font-weight: 600;">
+                    PDF →
+                </a>
             </td>
         </tr>
         """
         
-    return f'<tr><td style="padding: 0 30px 30px 30px;">{header_html}<table border="0" cellpadding="0" cellspacing="0" width="100%" style="border-collapse: collapse;">{rows_html}</table></td></tr>'
+    header_html = f"""
+    <div style="padding: 20px 20px 0 20px;">
+        <table border="0" cellpadding="0" cellspacing="0" width="100%">
+            <tr>
+                <td>
+                    <h2 style="font-size: 18px; color: #1f2937; margin: 0; font-weight: 600;">
+                        🇮🇳 CDSCO Written Confirmations
+                    </h2>
+                </td>
+                <td style="text-align: right;">
+                    <span style="background-color: #f59e0b; color: #ffffff; font-size: 12px; font-weight: 600; padding: 4px 12px; border-radius: 999px;">
+                        {len(data)} NEW
+                    </span>
+                </td>
+            </tr>
+        </table>
+    </div>
+    """
+    
+    return f"""
+    <tr>
+        <td style="padding-bottom: 24px;">
+            {header_html}
+            <div style="margin: 16px 20px 0 20px; border-radius: 8px; overflow: hidden; border: 1px solid #e5e7eb;">
+                <table border="0" cellpadding="0" cellspacing="0" width="100%" style="border-collapse: collapse;">
+                    <thead>
+                        <tr style="background-color: #f9fafb; border-bottom: 1px solid #e5e7eb;">
+                            <th style="padding: 10px 16px; text-align: left; font-size: 11px; font-weight: 600; color: #6b7280; text-transform: uppercase;">Date</th>
+                            <th style="padding: 10px 16px; text-align: left; font-size: 11px; font-weight: 600; color: #6b7280; text-transform: uppercase;">Company</th>
+                            <th style="padding: 10px 16px; text-align: left; font-size: 11px; font-weight: 600; color: #6b7280; text-transform: uppercase;">Products</th>
+                            <th style="padding: 10px 16px; text-align: right; font-size: 11px; font-weight: 600; color: #6b7280; text-transform: uppercase;">Doc</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {rows_html}
+                    </tbody>
+                </table>
+            </div>
+        </td>
+    </tr>
+    """
 
 def _format_fda_section(data: List[Dict]) -> str:
     sorted_data = _sort_data_by_date(data, 'posted_date')
-    header_html = f"""
-    <h2 style="font-size: 20px; color: #c0392b; margin: 0; font-weight: 500;">
-        <span style="font-size: 24px; vertical-align: middle;">🇺🇸</span> FDA Warning Letters
-        <span style="display: inline-block; background-color: #c0392b; color: #ffffff; font-size: 12px; font-weight: bold; padding: 4px 10px; border-radius: 12px; margin-left: 10px;">{len(data)} New</span>
-    </h2>
-    <hr style="border: 0; border-top: 2px solid #c0392b; margin: 15px 0;">
-    """
-
+    
     rows_html = ""
-    for item in sorted_data:
+    for i, item in enumerate(sorted_data):
         try:
             date_obj = datetime.strptime(item.get('posted_date'), '%Y-%m-%d')
-            formatted_date = date_obj.strftime('%b %d,<br>%Y')
+            formatted_date = date_obj.strftime('%b %d')
         except (ValueError, TypeError):
-            formatted_date = item.get('posted_date', 'N/A').replace('-', '<br>')
+            formatted_date = 'N/A'
 
         company = item.get('company_name', 'N/A')
         office = item.get('issuing_office', 'N/A')
+        if len(office) > 30:
+            office = office[:27] + "..."
+
+        bg_color = "#ffffff" if i % 2 == 0 else "#fafafa"
 
         rows_html += f"""
-        <tr>
-            <td style="padding: 15px 10px; vertical-align: top; width: 15%; font-size: 14px; color: #555555; border-bottom: 1px solid #eeeeee;">{formatted_date}</td>
-            <td style="padding: 15px 10px; vertical-align: top; width: 45%; font-size: 14px; border-bottom: 1px solid #eeeeee;">
-                <a href="{item.get('letter_url', '#')}" target="_blank" style="color: #005a9c; text-decoration: none; font-weight: 500;">{company}</a>
+        <tr style="background-color: {bg_color};">
+            <td style="padding: 12px 16px; font-size: 13px; color: #6b7280; white-space: nowrap;">
+                {formatted_date}
             </td>
-            <td style="padding: 15px 10px; vertical-align: top; font-size: 14px; color: #555555; border-bottom: 1px solid #eeeeee;">{office}</td>
+            <td style="padding: 12px 16px; font-size: 14px;">
+                <a href="{item.get('letter_url', '#')}" target="_blank" style="color: #374151; text-decoration: none; font-weight: 500;">
+                    {company[:40]}{'...' if len(company) > 40 else ''}
+                </a>
+            </td>
+            <td style="padding: 12px 16px; font-size: 13px; color: #6b7280;">
+                {office}
+            </td>
         </tr>
         """
         
-    return f'<tr><td style="padding: 0 30px 30px 30px;">{header_html}<table border="0" cellpadding="0" cellspacing="0" width="100%" style="border-collapse: collapse;">{rows_html}</table></td></tr>'
+    header_html = f"""
+    <div style="padding: 20px 20px 0 20px;">
+        <table border="0" cellpadding="0" cellspacing="0" width="100%">
+            <tr>
+                <td>
+                    <h2 style="font-size: 18px; color: #1f2937; margin: 0; font-weight: 600;">
+                        🇺🇸 FDA Warning Letters
+                    </h2>
+                </td>
+                <td style="text-align: right;">
+                    <span style="background-color: #ef4444; color: #ffffff; font-size: 12px; font-weight: 600; padding: 4px 12px; border-radius: 999px;">
+                        {len(data)} NEW
+                    </span>
+                </td>
+            </tr>
+        </table>
+    </div>
+    """
+    
+    return f"""
+    <tr>
+        <td style="padding-bottom: 24px;">
+            {header_html}
+            <div style="margin: 16px 20px 0 20px; border-radius: 8px; overflow: hidden; border: 1px solid #e5e7eb;">
+                <table border="0" cellpadding="0" cellspacing="0" width="100%" style="border-collapse: collapse;">
+                    <thead>
+                        <tr style="background-color: #f9fafb; border-bottom: 1px solid #e5e7eb;">
+                            <th style="padding: 10px 16px; text-align: left; font-size: 11px; font-weight: 600; color: #6b7280; text-transform: uppercase;">Date</th>
+                            <th style="padding: 10px 16px; text-align: left; font-size: 11px; font-weight: 600; color: #6b7280; text-transform: uppercase;">Company</th>
+                            <th style="padding: 10px 16px; text-align: left; font-size: 11px; font-weight: 600; color: #6b7280; text-transform: uppercase;">Office</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {rows_html}
+                    </tbody>
+                </table>
+            </div>
+        </td>
+    </tr>
+    """
 
 def format_consolidated_html(aggregated_results: Dict) -> str:
     body = """
@@ -217,14 +382,31 @@ def format_consolidated_html(aggregated_results: Dict) -> str:
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>PharmaReg Monitor Report</title>
+        <meta http-equiv="X-UA-Compatible" content="IE=edge">
+        <title>PharmaReg Intelligence Report</title>
+        <!--[if mso]>
+        <noscript>
+            <xml>
+                <o:OfficeDocumentSettings>
+                    <o:AllowPNG/>
+                    <o:PixelsPerInch>96</o:PixelsPerInch>
+                </o:OfficeDocumentSettings>
+            </xml>
+        </noscript>
+        <![endif]-->
     </head>
-    <body style="margin: 0; padding: 0; background-color: #f4f4f7; font-family: Arial, 'Helvetica Neue', Helvetica, sans-serif;">
-        <table border="0" cellpadding="0" cellspacing="0" width="100%">
+    <body style="margin: 0; padding: 0; background-color: #f3f4f6; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; -webkit-font-smoothing: antialiased;">
+        <table border="0" cellpadding="0" cellspacing="0" width="100%" style="background-color: #f3f4f6;">
             <tr>
-                <td>
-                    <table align="center" border="0" cellpadding="0" cellspacing="0" width="800" style="border-collapse: collapse; margin: 20px auto; background-color: #ffffff; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1);">
+                <td align="center" style="padding: 40px 0;">
+                    <!--[if (gte mso 9)|(IE)]>
+                    <table align="center" border="0" cellspacing="0" cellpadding="0" width="600">
+                    <tr>
+                    <td align="center" valign="top" width="600">
+                    <![endif]-->
+                    <table align="center" border="0" cellpadding="0" cellspacing="0" width="100%" style="max-width: 600px; background-color: #ffffff; border-radius: 12px; box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06); overflow: hidden;">
     """
+    
     body += _format_header_section()
     body += _format_dmf_section(aggregated_results)
     body += _format_summary_section(aggregated_results)
@@ -236,17 +418,25 @@ def format_consolidated_html(aggregated_results: Dict) -> str:
         for source, data in aggregated_results.items():
             if isinstance(data, list) and data:
                 body += source_formatters[source](data)
-    else:
+        
+        # Add footer
         body += """
         <tr>
-            <td style="padding: 10px 30px 40px 30px; text-align: center;">
-                <p style="font-size: 16px; color: #7f8c8d; margin: 0;">No new list updates found for any monitored source.</p>
+            <td style="padding: 24px; background-color: #f9fafb; border-top: 1px solid #e5e7eb;">
+                <p style="font-size: 12px; color: #9ca3af; margin: 0; text-align: center;">
+                    © 2025 PharmaReg Intelligence • Automated Regulatory Monitoring
+                </p>
             </td>
         </tr>
         """
         
     body += """
                     </table>
+                    <!--[if (gte mso 9)|(IE)]>
+                    </td>
+                    </tr>
+                    </table>
+                    <![endif]-->
                 </td>
             </tr>
         </table>
@@ -263,13 +453,13 @@ def send_consolidated_notification(aggregated_results: Dict, recipient_emails: L
         return False
 
     found_sources = [source.upper() for source, data in aggregated_results.items() if isinstance(data, list) and data]
-    today_str = datetime.now().strftime("%Y-%m-%d")
+    today_str = datetime.now().strftime("%B %d, %Y")
 
     if not found_sources:
-        subject = f"PharmaReg Report: {today_str} - No List Updates Found"
+        subject = f"PharmaReg Intelligence | {today_str} - No Updates"
     else:
         total_updates = sum(len(data) for data in aggregated_results.values() if isinstance(data, list))
-        subject = f"PharmaReg: {total_updates} New Updates from {', '.join(found_sources)} ({today_str})"
+        subject = f"PharmaReg Intelligence | {total_updates} New Updates - {today_str}"
 
     html_content = format_consolidated_html(aggregated_results)
     message = Mail(from_email=sender_email, to_emails=recipient_emails, subject=subject, html_content=html_content)
@@ -288,7 +478,7 @@ if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
     recipients_str = os.environ.get("RECIPIENT_EMAILS", "")
     if not recipients_str:
-        logging.error("RECIENT_EMAILS not configured.")
+        logging.error("RECIPIENT_EMAILS not configured.")
     else:
         recipient_list = [e.strip() for e in recipients_str.split(',') if e.strip()]
         
