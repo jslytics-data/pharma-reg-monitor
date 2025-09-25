@@ -30,25 +30,36 @@ def fetch_fda_json():
         logging.info(f"Successfully fetched {len(data.get('data', []))} records from FDA.")
         return data
     except (requests.exceptions.RequestException, json.JSONDecodeError) as e:
-        logging.error(f"Failed to fetch or decode FDA data: {e}")
+        logging.error(f"Failed to fetch or decode FDA data: {e}", exc_info=True)
         return None
 
 def parse_fda_letters(api_response: dict):
-    if not api_response or 'data' not in api_response:
-        logging.warning("FDA response is empty or missing 'data' key.")
-        return []
+    if not isinstance(api_response, dict) or 'data' not in api_response or not isinstance(api_response.get('data'), list):
+        logging.error("Structural error: FDA API response is malformed or missing the 'data' list.")
+        return None
 
-    data_rows = api_response.get('data', [])
     parsed_data = []
+    data_rows = api_response.get('data', [])
+    if not data_rows:
+        logging.info("FDA response contains zero data rows.")
+        return []
 
     for row in data_rows:
         try:
             soup_posted = BeautifulSoup(row[0], 'lxml')
+            time_tag = soup_posted.find('time')
+            if not time_tag or not time_tag.has_attr('datetime'):
+                logging.warning("Skipping row: could not find valid 'time' tag.")
+                continue
+
             soup_company = BeautifulSoup(row[2], 'lxml')
             company_link = soup_company.find('a')
+            if not company_link or not company_link.has_attr('href'):
+                logging.warning("Skipping row: could not find valid company link.")
+                continue
             
             record = {
-                "posted_date": soup_posted.find('time')['datetime'].split('T')[0],
+                "posted_date": time_tag['datetime'].split('T')[0],
                 "company_name": company_link.get_text(strip=True),
                 "issuing_office": row[3],
                 "subject": row[4],
@@ -56,22 +67,25 @@ def parse_fda_letters(api_response: dict):
             }
             parsed_data.append(record)
         except (IndexError, TypeError, AttributeError) as e:
-            logging.warning(f"Skipping a malformed FDA row. Error: {e}")
+            logging.warning(f"Skipping a malformed FDA row. Error: {e}", exc_info=True)
             
     logging.info(f"Successfully parsed {len(parsed_data)} FDA letters.")
     return parsed_data
 
 def check_for_updates(days_to_check: int = 7):
-    logging.info("Checking for FDA letter updates.")
-    days_to_check = min(days_to_check, 7)
+    logging.info("Starting FDA letter update check.")
+    # The FDA endpoint is fixed to a 7-day lookback, so we fetch that
+    # and then filter locally for the requested number of days.
     
     json_content = fetch_fda_json()
-    if not json_content:
-        return []
+    if json_content is None:
+        logging.error("FDA check failed: could not fetch JSON data.")
+        return None
     
     all_recent_letters = parse_fda_letters(json_content)
-    if not all_recent_letters:
-        return []
+    if all_recent_letters is None:
+        logging.error("FDA check failed: could not parse JSON response.")
+        return None
         
     cutoff_date = datetime.now() - timedelta(days=days_to_check)
     filtered_letters = [
@@ -79,15 +93,16 @@ def check_for_updates(days_to_check: int = 7):
         if datetime.strptime(letter.get("posted_date"), "%Y-%m-%d").date() >= cutoff_date.date()
     ]
     
-    logging.info(f"Found {len(filtered_letters)} FDA letters from the last {days_to_check} days.")
+    logging.info(f"FDA check complete. Found {len(filtered_letters)} letters in the last {days_to_check} days.")
     return filtered_letters
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
     
-    latest_letters = check_for_updates(days_to_check=7)
+    latest_letters = check_for_updates(days_to_check=0)
     
-    if latest_letters:
+    if latest_letters is not None:
+        logging.info(f"Test run successful. Found {len(latest_letters)} records.")
         output_dir = "exports"
         os.makedirs(output_dir, exist_ok=True)
         
@@ -100,4 +115,4 @@ if __name__ == "__main__":
             
         logging.info(f"Saved {len(latest_letters)} records to {filepath}")
     else:
-        logging.info("No new FDA letters found.")
+        logging.error("Test run failed. The check_for_updates function returned a failure signal (None).")

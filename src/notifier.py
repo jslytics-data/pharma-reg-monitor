@@ -15,7 +15,7 @@ def _sort_data_by_date(data: list, date_key: str) -> list:
             key=lambda x: datetime.strptime(x.get(date_key, '1900-01-01'), '%Y-%m-%d'),
             reverse=True
         )
-    except ValueError:
+    except (ValueError, TypeError):
         return data
 
 def _format_header_section() -> str:
@@ -92,7 +92,6 @@ def _format_dmf_section(aggregated_results: Dict) -> str:
 
 def _format_summary_section(aggregated_results: Dict) -> str:
     sources = []
-    total = 0
     
     source_info = {
         'edqm': {'icon': '🇪🇺', 'name': 'EDQM', 'color': '#3b82f6'},
@@ -103,7 +102,6 @@ def _format_summary_section(aggregated_results: Dict) -> str:
     for source, data in aggregated_results.items():
         if isinstance(data, list) and data:
             count = len(data)
-            total += count
             info = source_info.get(source, {'icon': '', 'name': source.upper(), 'color': '#6b7280'})
             sources.append(f"""
                 <td style="text-align: center; padding: 0 8px;">
@@ -118,7 +116,7 @@ def _format_summary_section(aggregated_results: Dict) -> str:
         <tr>
             <td style="padding: 24px 20px;">
                 <div style="background-color: #f9fafb; border-radius: 12px; padding: 32px; text-align: center;">
-                    <p style="font-size: 16px; color: #6b7280; margin: 0;">No new updates today</p>
+                    <p style="font-size: 16px; color: #6b7280; margin: 0;">No new updates found in the monitored sources.</p>
                 </div>
             </td>
         </tr>
@@ -129,7 +127,7 @@ def _format_summary_section(aggregated_results: Dict) -> str:
         <td style="padding: 0 20px 24px 20px;">
             <div style="background-color: #fafafa; border-radius: 12px; padding: 24px;">
                 <p style="font-size: 14px; color: #6b7280; margin: 0 0 16px 0; text-align: center; text-transform: uppercase; letter-spacing: 0.5px; font-weight: 600;">
-                    Today's Updates
+                    Summary of Updates
                 </p>
                 <table border="0" cellpadding="0" cellspacing="0" width="100%">
                     <tr>
@@ -375,7 +373,11 @@ def _format_fda_section(data: List[Dict]) -> str:
     </tr>
     """
 
-def format_consolidated_html(aggregated_results: Dict) -> str:
+def format_consolidated_html(aggregated_results: Dict) -> Optional[str]:
+    if not isinstance(aggregated_results, dict):
+        logging.error("Notifier: Invalid data type for aggregated_results, expected dict.")
+        return None
+
     body = """
     <!DOCTYPE html>
     <html>
@@ -412,23 +414,21 @@ def format_consolidated_html(aggregated_results: Dict) -> str:
     body += _format_summary_section(aggregated_results)
     
     source_formatters = {"edqm": _format_edqm_section, "cdsco": _format_cdsco_section, "fda": _format_fda_section}
-    has_list_content = any(isinstance(data, list) and data for data in aggregated_results.values())
     
-    if has_list_content:
-        for source, data in aggregated_results.items():
-            if isinstance(data, list) and data:
+    for source, data in aggregated_results.items():
+        if isinstance(data, list) and data:
+            if source in source_formatters:
                 body += source_formatters[source](data)
-        
-        # Add footer
-        body += """
-        <tr>
-            <td style="padding: 24px; background-color: #f9fafb; border-top: 1px solid #e5e7eb;">
-                <p style="font-size: 12px; color: #9ca3af; margin: 0; text-align: center;">
-                    © 2025 PharmaReg Intelligence • Automated Regulatory Monitoring
-                </p>
-            </td>
-        </tr>
-        """
+    
+    body += """
+    <tr>
+        <td style="padding: 24px; background-color: #f9fafb; border-top: 1px solid #e5e7eb;">
+            <p style="font-size: 12px; color: #9ca3af; margin: 0; text-align: center;">
+                © 2025 PharmaReg Intelligence • Automated Regulatory Monitoring
+            </p>
+        </td>
+    </tr>
+    """
         
     body += """
                     </table>
@@ -446,31 +446,42 @@ def format_consolidated_html(aggregated_results: Dict) -> str:
     return body
 
 def send_consolidated_notification(aggregated_results: Dict, recipient_emails: List[str]) -> bool:
-    sender_email = os.environ.get("SENDER_EMAIL")
-    api_key = os.environ.get("SENDGRID_API_KEY")
-    if not all([sender_email, api_key, recipient_emails]):
-        logging.error("Missing required email configuration.")
+    if not isinstance(aggregated_results, dict) or not isinstance(recipient_emails, list) or not recipient_emails:
+        logging.error("Notifier validation failed: Invalid input types or empty recipient list.")
         return False
 
-    found_sources = [source.upper() for source, data in aggregated_results.items() if isinstance(data, list) and data]
+    sender_email = os.environ.get("SENDER_EMAIL")
+    api_key = os.environ.get("SENDGRID_API_KEY")
+    if not all([sender_email, api_key]):
+        logging.error("Notifier validation failed: SENDER_EMAIL or SENDGRID_API_KEY is not configured.")
+        return False
+
+    total_updates = sum(len(data) for data in aggregated_results.values() if isinstance(data, list))
     today_str = datetime.now().strftime("%B %d, %Y")
 
-    if not found_sources:
+    if total_updates == 0:
         subject = f"PharmaReg Intelligence | {today_str} - No Updates"
     else:
-        total_updates = sum(len(data) for data in aggregated_results.values() if isinstance(data, list))
         subject = f"PharmaReg Intelligence | {total_updates} New Updates - {today_str}"
 
     html_content = format_consolidated_html(aggregated_results)
+    if html_content is None:
+        logging.error("Notifier failed: Could not generate HTML email content.")
+        return False
+        
     message = Mail(from_email=sender_email, to_emails=recipient_emails, subject=subject, html_content=html_content)
 
     try:
         sg = SendGridAPIClient(api_key)
         response = sg.send(message)
-        logging.info(f"Email sent successfully, status: {response.status_code}")
-        return True
+        if 200 <= response.status_code < 300:
+            logging.info(f"Email sent successfully to {len(recipient_emails)} recipients, status: {response.status_code}")
+            return True
+        else:
+            logging.error(f"SendGrid returned a non-success status code: {response.status_code}. Body: {response.body}")
+            return False
     except Exception as e:
-        logging.error(f"Failed to send email: {e}")
+        logging.error(f"An exception occurred while sending email via SendGrid: {e}", exc_info=True)
         return False
 
 if __name__ == "__main__":

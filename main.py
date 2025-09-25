@@ -38,11 +38,18 @@ def trigger_all_checks():
     
     try:
         logging.info("Authorized request received. Starting PharmaReg monitor process.")
-        run_all_checks_and_notify()
-        return jsonify({"status": "success", "message": "Process triggered successfully."}), 202
+        success = run_all_checks_and_notify()
+        
+        if success:
+            logging.info("Endpoint: Process completed successfully.")
+            return jsonify({"status": "success", "message": "Process triggered and completed successfully."}), 200
+        else:
+            logging.error("Endpoint: Process was halted due to a failure. See logs for details.")
+            return jsonify({"status": "error", "message": "Process halted due to an internal failure."}), 500
+            
     except Exception as e:
-        logging.error(f"An unexpected error occurred during the main process: {e}", exc_info=True)
-        return jsonify({"status": "error", "message": "An internal error occurred."}), 500
+        logging.critical(f"An unhandled exception occurred in the main process: {e}", exc_info=True)
+        return jsonify({"status": "error", "message": "An unexpected critical error occurred."}), 500
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8080))

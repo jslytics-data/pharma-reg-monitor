@@ -20,53 +20,62 @@ def fetch_cdsco_html():
         logging.info(f"Successfully fetched {len(response.content)} bytes from CDSCO.")
         return response.text
     except requests.exceptions.RequestException as e:
-        logging.error(f"Failed to fetch data from CDSCO: {e}")
+        logging.error(f"Failed to fetch data from CDSCO: {e}", exc_info=True)
         return None
 
 def parse_cdsco_table(html_content: str):
     if not html_content:
-        logging.warning("CDSCO HTML content is empty, cannot parse.")
-        return []
+        logging.error("Cannot parse empty HTML content.")
+        return None
 
-    soup = BeautifulSoup(html_content, 'lxml')
-    table = soup.find('table', id='example')
-    if not table:
-        logging.warning("Could not find the CDSCO results table.")
-        return []
+    try:
+        soup = BeautifulSoup(html_content, 'lxml')
+        table = soup.find('table', id='example')
 
-    parsed_data = []
-    tbody = table.find('tbody')
-    if not tbody:
-        return []
-    
-    data_rows = tbody.find_all('tr')
-    for row in data_rows:
-        cells = row.find_all('td')
-        if len(cells) == 7:
-            record = {"release_date": cells[4].get_text(strip=True).split(" ")[0]}
-            link_tag = cells[5].find('a')
-            
-            record["s_no"] = cells[0].get_text(strip=True)
-            record["wc_number"] = cells[1].get_text(strip=True)
-            record["company_name"] = cells[2].get_text(strip=True)
-            record["products"] = cells[3].get_text(strip=True)
-            record["download_pdf_link"] = f"{CDSCO_BASE_URL}{link_tag['href']}" if link_tag else ""
-            record["pdf_size"] = cells[6].get_text(strip=True)
-            
-            parsed_data.append(record)
-            
-    logging.info(f"Successfully parsed {len(parsed_data)} CDSCO records.")
-    return parsed_data
+        if not table:
+            logging.error("Structural error: Could not find the CDSCO results table on the page.")
+            return None
+
+        parsed_data = []
+        tbody = table.find('tbody')
+        if not tbody:
+            logging.warning("CDSCO table found, but it contains no body/data rows.")
+            return []
+        
+        data_rows = tbody.find_all('tr')
+        for row in data_rows:
+            cells = row.find_all('td')
+            if len(cells) == 7:
+                record = {"release_date": cells[4].get_text(strip=True).split(" ")[0]}
+                link_tag = cells[5].find('a')
+                
+                record["s_no"] = cells[0].get_text(strip=True)
+                record["wc_number"] = cells[1].get_text(strip=True)
+                record["company_name"] = cells[2].get_text(strip=True)
+                record["products"] = cells[3].get_text(strip=True)
+                record["download_pdf_link"] = f"{CDSCO_BASE_URL}{link_tag['href']}" if link_tag else ""
+                record["pdf_size"] = cells[6].get_text(strip=True)
+                
+                parsed_data.append(record)
+        
+        logging.info(f"Successfully parsed {len(parsed_data)} CDSCO records.")
+        return parsed_data
+    except Exception as e:
+        logging.error(f"An unexpected error occurred during CDSCO HTML parsing: {e}", exc_info=True)
+        return None
 
 def check_for_updates(days_to_check: int = 7):
-    logging.info("Checking for CDSCO confirmation updates.")
+    logging.info("Starting CDSCO update check.")
+    
     html = fetch_cdsco_html()
-    if not html:
-        return []
+    if html is None:
+        logging.error("CDSCO check failed: could not fetch HTML.")
+        return None
     
     all_confirmations = parse_cdsco_table(html)
-    if not all_confirmations:
-        return []
+    if all_confirmations is None:
+        logging.error("CDSCO check failed: could not parse table.")
+        return None
 
     recent_confirmations = []
     cutoff_date = datetime.now() - timedelta(days=days_to_check)
@@ -80,17 +89,18 @@ def check_for_updates(days_to_check: int = 7):
             if release_date.date() >= cutoff_date.date():
                 recent_confirmations.append(cert)
         except ValueError:
-            logging.warning(f"Could not parse date '{release_date_str}'. Skipping.")
+            logging.warning(f"Could not parse date '{release_date_str}'. Skipping record.")
     
-    logging.info(f"Found {len(recent_confirmations)} CDSCO confirmations from the last {days_to_check} days.")
+    logging.info(f"CDSCO check complete. Found {len(recent_confirmations)} updates in the last {days_to_check} days.")
     return recent_confirmations
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
     
-    latest_confirmations = check_for_updates(days_to_check=7)
+    latest_confirmations = check_for_updates(days_to_check=3)
     
-    if latest_confirmations:
+    if latest_confirmations is not None:
+        logging.info(f"Test run successful. Found {len(latest_confirmations)} records.")
         output_dir = "exports"
         os.makedirs(output_dir, exist_ok=True)
         
@@ -103,4 +113,4 @@ if __name__ == "__main__":
             
         logging.info(f"Saved {len(latest_confirmations)} records to {filepath}")
     else:
-        logging.info("No new CDSCO confirmations found.")
+        logging.error("Test run failed. The check_for_updates function returned a failure signal (None).")
