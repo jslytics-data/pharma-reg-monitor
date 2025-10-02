@@ -1,6 +1,7 @@
 import os
 import json
 import logging
+import time
 from datetime import datetime, timedelta
 
 import requests
@@ -10,11 +11,21 @@ FDA_AJAX_URL = "https://www.fda.gov/datatables/views/ajax"
 FDA_WL_PAGE_URL = "https://www.fda.gov/inspections-compliance-enforcement-and-criminal-investigations/compliance-actions-and-activities/warning-letters"
 FDA_BASE_URL = "https://www.fda.gov"
 
+# Headers that mimic a real browser to avoid automated blocking
+HEADERS = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36',
+    'Accept': 'application/json, text/javascript, */*; q=0.01',
+    'Accept-Language': 'en-US,en;q=0.9',
+    'Accept-Encoding': 'gzip, deflate, br',
+    'X-Requested-With': 'XMLHttpRequest',
+    'Connection': 'keep-alive',
+    'Referer': FDA_WL_PAGE_URL,
+}
+
 def fetch_fda_json():
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36',
-        'Referer': FDA_WL_PAGE_URL,
-    }
+    max_retries = 3
+    backoff_factor = 5  # seconds
+
     params = {
         'field_change_date_2': '1', 'length': '100', 'start': '0',
         'view_display_id': 'warning_letter_solr_block',
@@ -22,16 +33,25 @@ def fetch_fda_json():
         'view_path': '/inspections-compliance-enforcement-and-criminal-investigations/compliance-actions-and-activities/warning-letters',
         '_': int(datetime.now().timestamp() * 1000)
     }
-    try:
-        logging.info("Fetching last 7 days of FDA data via AJAX endpoint.")
-        response = requests.get(FDA_AJAX_URL, headers=headers, params=params, timeout=180)
-        response.raise_for_status()
-        data = response.json()
-        logging.info(f"Successfully fetched {len(data.get('data', []))} records from FDA.")
-        return data
-    except (requests.exceptions.RequestException, json.JSONDecodeError) as e:
-        logging.error(f"Failed to fetch or decode FDA data: {e}", exc_info=True)
-        return None
+
+    for attempt in range(max_retries):
+        try:
+            logging.info(f"Fetching FDA data via AJAX endpoint (Attempt {attempt + 1}/{max_retries})")
+            response = requests.get(FDA_AJAX_URL, headers=HEADERS, params=params, timeout=180)
+            response.raise_for_status()
+            data = response.json()
+            logging.info(f"Successfully fetched {len(data.get('data', []))} records from FDA.")
+            return data
+        except (requests.exceptions.RequestException, json.JSONDecodeError) as e:
+            logging.warning(f"Failed to fetch or decode FDA data on attempt {attempt + 1}: {e}")
+            if attempt < max_retries - 1:
+                sleep_time = backoff_factor * (attempt + 1)
+                logging.info(f"Waiting for {sleep_time} seconds before retrying...")
+                time.sleep(sleep_time)
+            else:
+                logging.error(f"All {max_retries} attempts to fetch FDA data failed.", exc_info=True)
+                return None
+    return None
 
 def parse_fda_letters(api_response: dict):
     if not isinstance(api_response, dict) or 'data' not in api_response or not isinstance(api_response.get('data'), list):
@@ -74,8 +94,6 @@ def parse_fda_letters(api_response: dict):
 
 def check_for_updates(days_to_check: int = 7):
     logging.info("Starting FDA letter update check.")
-    # The FDA endpoint is fixed to a 7-day lookback, so we fetch that
-    # and then filter locally for the requested number of days.
     
     json_content = fetch_fda_json()
     if json_content is None:
@@ -99,7 +117,7 @@ def check_for_updates(days_to_check: int = 7):
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
     
-    latest_letters = check_for_updates(days_to_check=0)
+    latest_letters = check_for_updates(days_to_check=7)
     
     if latest_letters is not None:
         logging.info(f"Test run successful. Found {len(latest_letters)} records.")
