@@ -1,4 +1,5 @@
 import os
+import json
 import logging
 import time
 from datetime import datetime
@@ -7,8 +8,8 @@ import requests
 from bs4 import BeautifulSoup
 
 FDA_DMF_URL = "https://www.fda.gov/drugs/drug-master-files-dmfs/list-drug-master-files-dmfs"
+FDA_BASE_URL = "https://www.fda.gov"
 
-# Headers that mimic a real browser to avoid automated blocking
 HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36',
     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
@@ -20,7 +21,7 @@ HEADERS = {
 
 def fetch_dmf_page_html():
     max_retries = 3
-    backoff_factor = 5  # seconds
+    backoff_factor = 5
 
     for attempt in range(max_retries):
         try:
@@ -39,64 +40,70 @@ def fetch_dmf_page_html():
                 return None
     return None
 
-def parse_dmf_update_date(html_content: str):
+def parse_dmf_page_details(html_content: str):
     if not html_content:
         logging.error("Cannot parse empty HTML content.")
         return None
 
     try:
         soup = BeautifulSoup(html_content, 'lxml')
-        
+        details = {}
+
         time_tag = soup.select_one("li.node-current-date time")
+        if time_tag and time_tag.get('datetime'):
+            details['update_date'] = time_tag.get('datetime').split('T')[0]
+        else:
+            logging.error("Structural error: Could not find the DMF update date on the page.")
+            return None
 
-        if not time_tag:
-            logging.warning("Primary selector failed. Trying fallback text search.")
-            heading = soup.find('h2', string=lambda t: t and 'Content current as of:' in t.strip())
-            if heading:
-                time_tag = heading.find_next('time')
+        excel_link_tag = soup.find('a', string=lambda text: text and 'excel' in text.lower())
+        if excel_link_tag and excel_link_tag.get('href'):
+            relative_url = excel_link_tag.get('href')
+            details['download_url'] = f"{FDA_BASE_URL}{relative_url}"
+        else:
+            logging.error("Structural error: Could not find the Excel download link on the page.")
+            return None
 
-        if time_tag:
-            date_from_attr = time_tag.get('datetime')
-            if date_from_attr:
-                return date_from_attr.split('T')[0]
-            
-            date_from_text = time_tag.get_text(strip=True)
-            try:
-                return datetime.strptime(date_from_text, '%m/%d/%Y').strftime('%Y-%m-%d')
-            except ValueError:
-                logging.error(f"Could not parse visible date text: {date_from_text}")
-                return None
-
-        logging.error("Structural error: Could not find the DMF update date on the page using any method.")
-        return None
+        return details
     except Exception as e:
         logging.error(f"An unexpected error occurred during FDA DMF HTML parsing: {e}", exc_info=True)
         return None
 
-def check_dmf_update_date():
-    logging.info("Starting FDA DMF List update date check.")
+def check_dmf_details():
+    logging.info("Starting FDA DMF List details check.")
     html = fetch_dmf_page_html()
     if html is None:
         logging.error("FDA DMF check failed: could not fetch HTML.")
         return None
-    
-    update_date = parse_dmf_update_date(html)
-    if update_date is None:
-        logging.error("FDA DMF check failed: could not parse update date.")
+
+    details = parse_dmf_page_details(html)
+    if details is None:
+        logging.error("FDA DMF check failed: could not parse page details.")
         return None
 
-    logging.info(f"FDA DMF check successful. Found update date: {update_date}")
-    return update_date
+    logging.info(f"FDA DMF check successful. Found details: {details}")
+    return details
 
 if __name__ == "__main__":
     logging.basicConfig(
         level=logging.INFO,
         format='%(asctime)s - %(levelname)s - %(message)s'
     )
-    
-    latest_update_date = check_dmf_update_date()
-    
-    if latest_update_date:
-        logging.info(f"Test run SUCCESS: Found FDA DMF list update date: {latest_update_date}")
+
+    dmf_details = check_dmf_details()
+
+    if dmf_details:
+        logging.info(f"Test run SUCCESS: Found FDA DMF details.")
+        output_dir = "exports"
+        os.makedirs(output_dir, exist_ok=True)
+
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"fda_dmf_details_{timestamp}.json"
+        filepath = os.path.join(output_dir, filename)
+
+        with open(filepath, "w", encoding="utf-8") as f:
+            json.dump(dmf_details, f, indent=4)
+
+        logging.info(f"Saved details to {filepath}")
     else:
-        logging.error("Test run FAILED: The check_dmf_update_date function returned a failure signal (None).")
+        logging.error("Test run FAILED: The function returned a failure signal (None).")

@@ -1,10 +1,11 @@
 import os
 import logging
-
 from dotenv import load_dotenv
 
 from .sources import cdsco_source, edqm_source, fda_source, fda_dmf_source
-from . import notifier
+from . import consolidate_results
+from . import generate_email_html
+from . import send_email_notification
 
 def run_all_checks_and_notify():
     logging.info("Manager: Starting orchestration.")
@@ -19,59 +20,65 @@ def run_all_checks_and_notify():
     if not recipients_str:
         logging.error("MANAGER HALTING: RECIPIENT_EMAILS environment variable not set.")
         return False
-
     recipient_list = [email.strip() for email in recipients_str.split(',') if email.strip()]
     if not recipient_list:
         logging.error("MANAGER HALTING: No valid email addresses found in RECIPIENT_EMAILS.")
         return False
 
-    aggregated_results = {}
+    raw_results = {}
 
-    # --- Step 1: EDQM ---
     logging.info("Manager: Checking source [EDQM].")
     edqm_updates = edqm_source.check_for_updates(days_to_check)
     if edqm_updates is None:
         logging.error("MANAGER HALTING: The EDQM source failed.")
         return False
-    aggregated_results["edqm"] = edqm_updates
-    logging.info(f"Manager: EDQM check successful, found {len(edqm_updates)} items.")
+    raw_results["edqm"] = edqm_updates
+    logging.info("Manager: EDQM check successful.")
 
-    # --- Step 2: CDSCO ---
     logging.info("Manager: Checking source [CDSCO].")
     cdsco_updates = cdsco_source.check_for_updates(days_to_check)
     if cdsco_updates is None:
         logging.error("MANAGER HALTING: The CDSCO source failed.")
         return False
-    aggregated_results["cdsco"] = cdsco_updates
-    logging.info(f"Manager: CDSCO check successful, found {len(cdsco_updates)} items.")
+    raw_results["cdsco"] = cdsco_updates
+    logging.info("Manager: CDSCO check successful.")
 
-    # --- Step 3: FDA Warning Letters ---
     logging.info("Manager: Checking source [FDA Warning Letters].")
     fda_updates = fda_source.check_for_updates(days_to_check)
     if fda_updates is None:
         logging.error("MANAGER HALTING: The FDA Warning Letters source failed.")
         return False
-    aggregated_results["fda"] = fda_updates
-    logging.info(f"Manager: FDA check successful, found {len(fda_updates)} items.")
+    raw_results["fda"] = fda_updates
+    logging.info("Manager: FDA check successful.")
 
-    # --- Step 4: FDA DMF Date ---
-    logging.info("Manager: Checking source [FDA DMF Date].")
-    dmf_date = fda_dmf_source.check_dmf_update_date()
-    if dmf_date is None:
-        logging.error("MANAGER HALTING: The FDA DMF Date source failed.")
+    logging.info("Manager: Checking source [FDA DMF Details].")
+    dmf_details = fda_dmf_source.check_dmf_details()
+    if dmf_details is None:
+        logging.error("MANAGER HALTING: The FDA DMF Details source failed.")
         return False
-    aggregated_results["dmf"] = {"update_date": dmf_date}
-    logging.info(f"Manager: FDA DMF Date check successful, found date: {dmf_date}.")
+    raw_results["fda_dmf"] = dmf_details
+    logging.info("Manager: FDA DMF Details check successful.")
 
-    # --- Step 5: Notification ---
-    logging.info("Manager: All sources successful. Handing off to Notifier.")
-    notification_sent = notifier.send_consolidated_notification(
-        aggregated_results=aggregated_results,
+    logging.info("Manager: All sources successful. Handing off to Consolidator.")
+    consolidated_report = consolidate_results.consolidate_source_data(raw_results)
+    if consolidated_report is None:
+        logging.error("MANAGER HALTING: The Consolidator failed.")
+        return False
+
+    logging.info("Manager: Consolidation successful. Handing off to HTML Generator.")
+    email_package = generate_email_html.generate_html_report(consolidated_report)
+    if not email_package:
+        logging.error("MANAGER HALTING: The HTML Generator failed.")
+        return False
+
+    logging.info("Manager: HTML generation successful. Handing off to Email Sender.")
+    notification_sent = send_email_notification.send_email(
+        subject=email_package["subject"],
+        html_body=email_package["html_body"],
         recipient_emails=recipient_list
     )
-
     if not notification_sent:
-        logging.error("MANAGER HALTING: The Notifier failed to send the email.")
+        logging.error("MANAGER HALTING: The Email Sender failed.")
         return False
 
     logging.info("Manager: Orchestration complete.")
