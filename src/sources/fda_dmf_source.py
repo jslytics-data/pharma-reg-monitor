@@ -4,7 +4,7 @@ import logging
 import time
 from datetime import datetime
 
-import requests
+from curl_cffi import requests
 from bs4 import BeautifulSoup
 
 FDA_DMF_URL = "https://www.fda.gov/drugs/drug-master-files-dmfs/list-drug-master-files-dmfs"
@@ -26,10 +26,10 @@ def fetch_dmf_page_html():
     for attempt in range(max_retries):
         try:
             logging.info(f"Fetching FDA DMF page from {FDA_DMF_URL} (Attempt {attempt + 1}/{max_retries})")
-            response = requests.get(FDA_DMF_URL, headers=HEADERS, timeout=60)
+            response = requests.get(FDA_DMF_URL, headers=HEADERS, timeout=60, impersonate="chrome110")
             response.raise_for_status()
             return response.text
-        except requests.exceptions.RequestException as e:
+        except requests.errors.RequestsError as e:
             logging.warning(f"Failed to fetch FDA DMF page on attempt {attempt + 1}: {e}")
             if attempt < max_retries - 1:
                 sleep_time = backoff_factor * (attempt + 1)

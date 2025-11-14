@@ -4,7 +4,7 @@ import logging
 import time
 from datetime import datetime, timedelta
 
-import requests
+from curl_cffi import requests
 from bs4 import BeautifulSoup
 
 FDA_AJAX_URL = "https://www.fda.gov/datatables/views/ajax"
@@ -38,17 +38,17 @@ def fetch_fda_json():
     for attempt in range(max_retries):
         try:
             logging.info(f"Establishing session by visiting main FDA page (Attempt {attempt + 1}/{max_retries})")
-            session.get(FDA_WL_PAGE_URL, timeout=60)
+            session.get(FDA_WL_PAGE_URL, timeout=60, impersonate="chrome110")
             
             logging.info(f"Fetching FDA data via AJAX endpoint")
-            response = session.get(FDA_AJAX_URL, params=params, timeout=180)
+            response = session.get(FDA_AJAX_URL, params=params, timeout=180, impersonate="chrome110")
             response.raise_for_status()
             
             data = response.json()
             logging.info(f"Successfully fetched {len(data.get('data', []))} records from FDA.")
             return data
             
-        except (requests.exceptions.RequestException, json.JSONDecodeError) as e:
+        except (requests.errors.RequestsError, json.JSONDecodeError) as e:
             logging.warning(f"Failed to fetch or decode FDA data on attempt {attempt + 1}: {e}")
             if attempt < max_retries - 1:
                 sleep_time = backoff_factor * (attempt + 1)
