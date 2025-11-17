@@ -3,7 +3,8 @@ requests
 beautifulsoup4
 lxml
 curl-cffi
-
+playwright
+pandas
 
 # Environment & Configuration
 python-dotenv
