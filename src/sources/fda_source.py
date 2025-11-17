@@ -2,6 +2,7 @@ import os
 import json
 import logging
 import time
+import re
 from datetime import datetime, timedelta
 
 from curl_cffi import requests
@@ -18,51 +19,58 @@ HEADERS = {
     'X-Requested-With': 'XMLHttpRequest',
 }
 
-def _fetch_recent_letters_from_api() -> dict | None:
+def _get_view_dom_id(session: requests.Session) -> str | None:
+    try:
+        logging.info("Fetching main page to acquire session token (view_dom_id)...")
+        response = session.get(FDA_WL_PAGE_URL, headers=HEADERS, timeout=60, impersonate="chrome110")
+        response.raise_for_status()
+        soup = BeautifulSoup(response.content, 'lxml')
+        
+        view_div = soup.find('div', class_=re.compile(r"js-view-dom-id-"))
+        if not view_div:
+            logging.error("Could not find the main view div to extract the view_dom_id.")
+            return None
+        
+        class_list = view_div.get('class', [])
+        dom_id_class = next((cls for cls in class_list if cls.startswith('js-view-dom-id-')), None)
+
+        if dom_id_class:
+            view_dom_id = dom_id_class.replace('js-view-dom-id-', '')
+            logging.info(f"Successfully acquired session token: {view_dom_id}")
+            return view_dom_id
+            
+        logging.error("Could not extract view_dom_id from the page HTML.")
+        return None
+    except requests.errors.RequestsError as e:
+        logging.error(f"Failed to fetch the main page to get session token: {e}")
+        return None
+
+def _fetch_recent_letters_from_api(session: requests.Session, view_dom_id: str) -> dict | None:
     params = {
         'field_change_date_2': '2',
         'length': '100',
-        'start': '0',
         'view_display_id': 'warning_letter_solr_block',
         'view_name': 'warning_letter_solr_index',
         'view_path': '/inspections-compliance-enforcement-and-criminal-investigations/compliance-actions-and-activities/warning-letters',
+        '_drupal_ajax': '1',
+        'view_dom_id': view_dom_id,
         '_': int(datetime.now().timestamp() * 1000)
     }
-
-    max_retries = 3
-    backoff_factor = 5
-    for attempt in range(max_retries):
-        try:
-            logging.info(f"Attempting direct API call with filters (Attempt {attempt + 1}/{max_retries})")
-            response = requests.get(FDA_AJAX_URL, headers=HEADERS, params=params, timeout=120, impersonate="chrome110")
-            response.raise_for_status()
-            json_content = response.json()
-            logging.info(f"API call successful. Received {len(json_content.get('data',[]))} records from the last 30 days.")
-            return json_content
-        except requests.errors.RequestsError as e:
-            logging.warning(f"Direct API call failed on attempt {attempt + 1}: {e}")
-            if e.response:
-                status_code = e.response.status_code
-                headers = e.response.headers
-                body_snippet = e.response.text[:1000]
-                logging.error(f"FDA API Request Failure Details:")
-                logging.error(f"  - Status Code: {status_code}")
-                logging.error(f"  - Response Headers: {headers}")
-                logging.error(f"  - Response Body Snippet: {body_snippet}")
-            
-            if attempt < max_retries - 1:
-                time.sleep(backoff_factor * (attempt + 1))
-            else:
-                logging.error("All attempts for the direct API call failed.", exc_info=False)
-                return None
-        except json.JSONDecodeError as e:
-            logging.error(f"Failed to decode JSON from response. This may indicate an HTML block page was served. Error: {e}")
-            return None
-    return None
+    
+    try:
+        logging.info(f"Attempting direct API call with session token...")
+        response = session.get(FDA_AJAX_URL, headers=HEADERS, params=params, timeout=120, impersonate="chrome110")
+        response.raise_for_status()
+        json_data = response.json()
+        logging.info(f"API call successful. Received {len(json_data.get('data',[]))} records.")
+        return json_data
+    except (requests.errors.RequestsError, json.JSONDecodeError) as e:
+        logging.error(f"Direct API call failed: {e}", exc_info=True)
+        return None
 
 def parse_fda_letters(api_response: dict):
     if not isinstance(api_response, dict) or 'data' not in api_response or not isinstance(api_response.get('data'), list):
-        logging.error("Structural error: FDA API response is malformed or missing the 'data' list.")
+        logging.error("Structural error: API response is malformed or missing the 'data' list.")
         return None
 
     parsed_data = []
@@ -70,37 +78,41 @@ def parse_fda_letters(api_response: dict):
         try:
             soup_posted = BeautifulSoup(row[0], 'lxml')
             posted_time_tag = soup_posted.find('time')
-            soup_company = BeautifulSoup(row[2], 'lxml')
-            company_link = soup_company.find('a')
             soup_issue = BeautifulSoup(row[1], 'lxml')
             issue_time_tag = soup_issue.find('time')
-
+            soup_company = BeautifulSoup(row[2], 'lxml')
+            company_link = soup_company.find('a')
+            
             record = {
                 "posted_date": posted_time_tag['datetime'].split('T')[0] if posted_time_tag else None,
                 "issue_date": issue_time_tag['datetime'].split('T')[0] if issue_time_tag else None,
                 "company_name": company_link.get_text(strip=True) if company_link else row[2],
-                "issuing_office": row[3],
-                "subject": row[4],
+                "issuing_office": BeautifulSoup(row[3], 'lxml').get_text(strip=True),
+                "subject": BeautifulSoup(row[4], 'lxml').get_text(strip=True),
                 "letter_url": f"{FDA_BASE_URL}{company_link['href']}" if company_link else None,
             }
             parsed_data.append(record)
         except Exception:
-            logging.warning(f"Skipping a malformed FDA row: {row}", exc_info=True)
-
+            logging.warning(f"Skipping a malformed FDA row.", exc_info=True)
     logging.info(f"Successfully parsed {len(parsed_data)} FDA letters.")
     return parsed_data
 
 def check_for_updates(days_to_check: int = 7):
-    logging.info("Starting FDA letter update check using direct API with filters.")
+    logging.info("Starting FDA letter update check using two-step API approach.")
+    
+    with requests.Session() as session:
+        view_dom_id = _get_view_dom_id(session)
+        if not view_dom_id:
+            logging.error("FDA check failed: could not acquire session token.")
+            return None
 
-    json_content = _fetch_recent_letters_from_api()
+        json_content = _fetch_recent_letters_from_api(session, view_dom_id)
+    
     if json_content is None:
-        logging.error("FDA check failed: could not fetch data from the API.")
         return None
 
     all_recent_letters = parse_fda_letters(json_content)
     if all_recent_letters is None:
-        logging.error("FDA check failed: could not parse the API response.")
         return None
 
     cutoff_date = datetime.now() - timedelta(days=days_to_check)
@@ -114,23 +126,15 @@ def check_for_updates(days_to_check: int = 7):
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-
     result_package = check_for_updates(days_to_check=7)
-
-    if result_package is not None:
-        record_count = len(result_package.get("data", []))
-        logging.info(f"Test run successful. Found {record_count} records.")
-        
+    if result_package:
+        logging.info(f"Test run successful. Found {len(result_package['data'])} records.")
         output_dir = "exports"
         os.makedirs(output_dir, exist_ok=True)
-
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f"fda_letters_{timestamp}.json"
-        filepath = os.path.join(output_dir, filename)
-
-        with open(filepath, "w", encoding="utf-8") as f:
+        with open(os.path.join(output_dir, filename), "w") as f:
             json.dump(result_package, f, indent=4)
-
-        logging.info(f"Saved package with {record_count} records to {filepath}")
+        logging.info(f"Saved package to {os.path.join(output_dir, filename)}")
     else:
-        logging.error("Test run failed. The check_for_updates function returned a failure signal (None).")
+        logging.error("Test run failed.")
