@@ -65,6 +65,10 @@ def run_all_checks_and_notify():
         logging.error("MANAGER HALTING: The Consolidator failed.")
         return False
 
+    if consolidated_report.get("total_updates", 0) == 0:
+        logging.info("Manager: Process complete. No new updates found to report.")
+        return True
+
     logging.info("Manager: Consolidation successful. Handing off to HTML Generator.")
     email_package = generate_email_html.generate_html_report(consolidated_report)
     if not email_package:
