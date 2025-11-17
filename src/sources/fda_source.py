@@ -11,6 +11,7 @@ FDA_AJAX_URL = "https://www.fda.gov/datatables/views/ajax"
 FDA_WL_PAGE_URL = "https://www.fda.gov/inspections-compliance-enforcement-and-criminal-investigations/compliance-actions-and-activities/warning-letters"
 FDA_BASE_URL = "https://www.fda.gov"
 
+# It's good practice to define headers at the top
 HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36',
     'Accept': 'application/json, text/javascript, */*; q=0.01',
@@ -24,39 +25,44 @@ HEADERS = {
 def fetch_fda_json():
     max_retries = 3
     backoff_factor = 5
-    session = requests.Session()
-    session.headers.update(HEADERS)
+    
+    # Use a session object to persist cookies and headers
+    with requests.Session() as session:
+        session.headers.update(HEADERS)
 
-    params = {
-        'field_change_date_2': '1', 'length': '100', 'start': '0',
-        'view_display_id': 'warning_letter_solr_block',
-        'view_name': 'warning_letter_solr_index',
-        'view_path': '/inspections-compliance-enforcement-and-criminal-investigations/compliance-actions-and-activities/warning-letters',
-        '_': int(datetime.now().timestamp() * 1000)
-    }
-
-    for attempt in range(max_retries):
-        try:
-            logging.info(f"Establishing session by visiting main FDA page (Attempt {attempt + 1}/{max_retries})")
-            session.get(FDA_WL_PAGE_URL, timeout=60, impersonate="chrome110")
-            
-            logging.info(f"Fetching FDA data via AJAX endpoint")
-            response = session.get(FDA_AJAX_URL, params=params, timeout=180, impersonate="chrome110")
-            response.raise_for_status()
-            
-            data = response.json()
-            logging.info(f"Successfully fetched {len(data.get('data', []))} records from FDA.")
-            return data
-            
-        except (requests.errors.RequestsError, json.JSONDecodeError) as e:
-            logging.warning(f"Failed to fetch or decode FDA data on attempt {attempt + 1}: {e}")
-            if attempt < max_retries - 1:
-                sleep_time = backoff_factor * (attempt + 1)
-                logging.info(f"Waiting for {sleep_time} seconds before retrying...")
-                time.sleep(sleep_time)
-            else:
-                logging.error(f"All {max_retries} attempts to fetch FDA data failed.", exc_info=True)
-                return None
+        for attempt in range(max_retries):
+            try:
+                logging.info(f"Establishing session by visiting main FDA page (Attempt {attempt + 1}/{max_retries})")
+                # Use a modern browser for impersonation
+                session.get(FDA_WL_PAGE_URL, timeout=60, impersonate="chrome110")
+                
+                logging.info("Fetching FDA data via AJAX endpoint")
+                
+                params = {
+                    'field_change_date_2': '1', 'length': '100', 'start': '0',
+                    'view_display_id': 'warning_letter_solr_block',
+                    'view_name': 'warning_letter_solr_index',
+                    'view_path': '/inspections-compliance-enforcement-and-criminal-investigations/compliance-actions-and-activities/warning-letters',
+                    '_': int(datetime.now().timestamp() * 1000)
+                }
+                
+                # The impersonate parameter is crucial here as well
+                response = session.get(FDA_AJAX_URL, params=params, timeout=180, impersonate="chrome110")
+                response.raise_for_status()
+                
+                data = response.json()
+                logging.info(f"Successfully fetched {len(data.get('data', []))} records from FDA.")
+                return data
+                
+            except (requests.errors.RequestsError, json.JSONDecodeError) as e:
+                logging.warning(f"Failed to fetch or decode FDA data on attempt {attempt + 1}: {e}")
+                if attempt < max_retries - 1:
+                    sleep_time = backoff_factor * (attempt + 1)
+                    logging.info(f"Waiting for {sleep_time} seconds before retrying...")
+                    time.sleep(sleep_time)
+                else:
+                    logging.error(f"All {max_retries} attempts to fetch FDA data failed.", exc_info=True)
+                    return None
     return None
 
 def parse_fda_letters(api_response: dict):

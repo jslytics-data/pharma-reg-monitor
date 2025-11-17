@@ -23,21 +23,26 @@ def fetch_dmf_page_html():
     max_retries = 3
     backoff_factor = 5
 
-    for attempt in range(max_retries):
-        try:
-            logging.info(f"Fetching FDA DMF page from {FDA_DMF_URL} (Attempt {attempt + 1}/{max_retries})")
-            response = requests.get(FDA_DMF_URL, headers=HEADERS, timeout=60, impersonate="chrome110")
-            response.raise_for_status()
-            return response.text
-        except requests.errors.RequestsError as e:
-            logging.warning(f"Failed to fetch FDA DMF page on attempt {attempt + 1}: {e}")
-            if attempt < max_retries - 1:
-                sleep_time = backoff_factor * (attempt + 1)
-                logging.info(f"Waiting for {sleep_time} seconds before retrying...")
-                time.sleep(sleep_time)
-            else:
-                logging.error(f"All {max_retries} attempts to fetch the FDA DMF page failed.", exc_info=True)
-                return None
+    # Use a session object to better mimic a real browser session
+    with requests.Session() as session:
+        session.headers.update(HEADERS)
+
+        for attempt in range(max_retries):
+            try:
+                logging.info(f"Fetching FDA DMF page from {FDA_DMF_URL} (Attempt {attempt + 1}/{max_retries})")
+                # Use the session to make the request, with browser impersonation
+                response = session.get(FDA_DMF_URL, timeout=60, impersonate="chrome110")
+                response.raise_for_status()
+                return response.text
+            except requests.errors.RequestsError as e:
+                logging.warning(f"Failed to fetch FDA DMF page on attempt {attempt + 1}: {e}")
+                if attempt < max_retries - 1:
+                    sleep_time = backoff_factor * (attempt + 1)
+                    logging.info(f"Waiting for {sleep_time} seconds before retrying...")
+                    time.sleep(sleep_time)
+                else:
+                    logging.error(f"All {max_retries} attempts to fetch the FDA DMF page failed.", exc_info=True)
+                    return None
     return None
 
 def parse_dmf_page_details(html_content: str):
