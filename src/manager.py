@@ -2,7 +2,7 @@ import os
 import logging
 from dotenv import load_dotenv
 
-from .sources import cdsco_source, edqm_source, fda_wl_source, fda_dmf_source
+from .sources import cdsco_source, edqm_source, fda_source, fda_dmf_source
 from . import consolidate_results
 from . import generate_email_html
 from . import send_email_notification
@@ -44,7 +44,7 @@ def run_all_checks_and_notify():
     logging.info("Manager: CDSCO check successful.")
 
     logging.info("Manager: Checking source [FDA Warning Letters].")
-    fda_updates = fda_wl_source.check_for_updates(days_to_check)
+    fda_updates = fda_source.check_for_updates(days_to_check)
     if fda_updates is None:
         logging.error("MANAGER HALTING: The FDA Warning Letters source failed.")
         return False

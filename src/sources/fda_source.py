@@ -3,118 +3,221 @@ import json
 import logging
 import time
 import re
+import hashlib
 from datetime import datetime, timedelta
+from urllib.parse import urlparse
 
-from curl_cffi import requests
+import requests
 from bs4 import BeautifulSoup
 
+# --- CONFIGURATION ---
 FDA_AJAX_URL = "https://www.fda.gov/datatables/views/ajax"
 FDA_WL_PAGE_URL = "https://www.fda.gov/inspections-compliance-enforcement-and-criminal-investigations/compliance-actions-and-activities/warning-letters"
 FDA_BASE_URL = "https://www.fda.gov"
 
+# Standard headers
 HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36',
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36',
     'Accept': 'application/json, text/javascript, */*; q=0.01',
-    'Referer': FDA_WL_PAGE_URL,
-    'X-Requested-With': 'XMLHttpRequest',
+    'Accept-Language': 'en-US,en;q=0.9',
 }
 
-def _get_view_dom_id(session: requests.Session) -> str | None:
+# --- HELPER: CHALLENGE SOLVER ---
+def _compute_sha256(text: str) -> str:
+    """Mimics the JS SHA256 function found in FDA's abuse deterrent script."""
+    return hashlib.sha256(text.encode('utf-8')).hexdigest().upper()
+
+def _solve_challenge_and_get_session() -> requests.Session | None:
+    """
+    Initiates a session. If the FDA 'abuse-deterrent' challenge is detected,
+    it solves the math puzzle, sets cookies, and authorizes the session.
+    """
+    session = requests.Session()
+    session.headers.update(HEADERS)
+
     try:
-        logging.info("Fetching main page to acquire session token (view_dom_id)...")
-        response = session.get(FDA_WL_PAGE_URL, headers=HEADERS, timeout=60, impersonate="chrome110")
-        response.raise_for_status()
-        soup = BeautifulSoup(response.content, 'lxml')
-        
-        view_div = soup.find('div', class_=re.compile(r"js-view-dom-id-"))
-        if not view_div:
-            logging.error("Could not find the main view div to extract the view_dom_id.")
-            return None
-        
-        class_list = view_div.get('class', [])
-        dom_id_class = next((cls for cls in class_list if cls.startswith('js-view-dom-id-')), None)
+        logging.info("Initiating handshake with FDA Landing Page...")
+        response = session.get(FDA_WL_PAGE_URL, timeout=30)
 
-        if dom_id_class:
-            view_dom_id = dom_id_class.replace('js-view-dom-id-', '')
-            logging.info(f"Successfully acquired session token: {view_dom_id}")
-            return view_dom_id
+        # Case A: No challenge (200 OK and clean HTML)
+        if response.status_code == 200 and "abuse-deterrent.js" not in response.text:
+            logging.info("No challenge detected. Session is ready.")
+            return session
+
+        # Case B: Challenge Detected
+        if "abuse-deterrent.js" in response.text or "public_salt" in response.text:
+            logging.info("Abuse deterrent challenge detected. Attempting to solve...")
+
+            # Extract variables
+            salt_match = re.search(r'let public_salt = "([^"]+)";', response.text)
+            candidates_match = re.search(r'candidates = "([^"]+)".split', response.text)
+
+            if not salt_match or not candidates_match:
+                logging.error("Could not extract challenge variables from HTML.")
+                return None
+
+            public_salt = salt_match.group(1)
+            candidates = candidates_match.group(1).split('/')
+
+            # Solve puzzle
+            auth_1 = _compute_sha256(public_salt + candidates[0])
+            auth_2 = _compute_sha256(public_salt + candidates[1])
+
+            # Set cookies
+            domain = urlparse(FDA_WL_PAGE_URL).netloc
+            session.cookies.set("authorization_1", auth_1, domain=domain)
+            session.cookies.set("authorization_2", auth_2, domain=domain)
+
+            logging.info("Challenge solved. Authorization cookies set.")
+            return session
+        
+        logging.warning(f"Unexpected response: {response.status_code}")
+        return None
+
+    except Exception as e:
+        logging.error(f"Error during session initialization: {e}", exc_info=True)
+        return None
+
+# --- HELPER: PARSERS ---
+def _extract_view_dom_id(session: requests.Session) -> str | None:
+    """Fetches the landing page to extract the dynamic Drupal view ID."""
+    try:
+        # Note: We use the authorized session here
+        response = session.get(FDA_WL_PAGE_URL, timeout=30)
+        match = re.search(r'js-view-dom-id-([a-zA-Z0-9]+)', response.text)
+        if match:
+            dom_id = match.group(1)
+            logging.info(f"Successfully extracted view_dom_id: {dom_id}")
+            return dom_id
+    except Exception:
+        pass
+    logging.warning("Could not extract view_dom_id. API calls may fail.")
+    return None
+
+def parse_fda_letters(api_response: dict) -> list:
+    """Parses the JSON/HTML mix returned by the FDA API."""
+    parsed_data = []
+    
+    # Handle Drupal structure (can be list of commands or direct data dict)
+    raw_rows = []
+    if isinstance(api_response, list):
+        raw_rows = api_response # Fallback
+    elif isinstance(api_response, dict) and 'data' in api_response:
+        raw_rows = api_response.get('data', [])
+
+    for row in raw_rows:
+        try:
+            if len(row) < 5: continue
+
+            # Use html.parser for Cloud Run compatibility (no lxml dependency issues)
+            soup_posted = BeautifulSoup(row[0], 'html.parser')
+            posted_time_tag = soup_posted.find('time')
             
-        logging.error("Could not extract view_dom_id from the page HTML.")
-        return None
-    except requests.errors.RequestsError as e:
-        logging.error(f"Failed to fetch the main page to get session token: {e}")
+            # Posted Date
+            posted_date = None
+            if posted_time_tag and posted_time_tag.has_attr('datetime'):
+                posted_date = posted_time_tag['datetime'].split('T')[0]
+            else:
+                # Fallback to text parsing
+                text_date = soup_posted.get_text(strip=True)
+                try:
+                    posted_date = datetime.strptime(text_date, "%m/%d/%Y").strftime("%Y-%m-%d")
+                except: pass
+
+            # Issue Date (Column 1)
+            # Note: The original script parsed this, keeping it for consistency
+            soup_issue = BeautifulSoup(row[1], 'html.parser')
+            issue_time_tag = soup_issue.find('time')
+            issue_date = None
+            if issue_time_tag and issue_time_tag.has_attr('datetime'):
+                issue_date = issue_time_tag['datetime'].split('T')[0]
+
+            # Company Name & URL (Column 2)
+            soup_company = BeautifulSoup(row[2], 'html.parser')
+            company_link = soup_company.find('a')
+            company_name = company_link.get_text(strip=True) if company_link else row[2]
+            
+            letter_url = None
+            if company_link and company_link.has_attr('href'):
+                href = company_link['href']
+                letter_url = href if href.startswith("http") else f"{FDA_BASE_URL}{href}"
+
+            # Issuing Office (Column 3)
+            issuing_office = BeautifulSoup(row[3], 'html.parser').get_text(strip=True)
+
+            # Subject (Column 4)
+            subject = BeautifulSoup(row[4], 'html.parser').get_text(strip=True)
+            
+            record = {
+                "posted_date": posted_date,
+                "issue_date": issue_date,
+                "company_name": company_name,
+                "issuing_office": issuing_office,
+                "subject": subject,
+                "letter_url": letter_url,
+            }
+            parsed_data.append(record)
+        except Exception:
+            # Silent skip for malformed rows
+            continue
+            
+    return parsed_data
+
+# --- MAIN FUNCTION ---
+def check_for_updates(days_to_check: int = 7):
+    """
+    Main entrypoint. 
+    1. Solves Challenge.
+    2. Gets Token.
+    3. Fetches API Data.
+    4. Parses & Filters.
+    """
+    logging.info(f"Starting FDA letter update check (Last {days_to_check} days).")
+    
+    # 1. Initialize Session (with Solver)
+    session = _solve_challenge_and_get_session()
+    if not session:
+        logging.error("FDA check failed: Could not initialize authorized session.")
         return None
 
-def _fetch_recent_letters_from_api(session: requests.Session, view_dom_id: str) -> dict | None:
+    # 2. Get Dynamic ID
+    view_dom_id = _extract_view_dom_id(session)
+    
+    # 3. Prepare API Request
+    # We ensure headers match what a browser sends after the initial load
+    session.headers.update({
+        'X-Requested-With': 'XMLHttpRequest',
+        'Referer': FDA_WL_PAGE_URL,
+        'Origin': FDA_BASE_URL
+    })
+
     params = {
-        'field_change_date_2': '2',
-        'length': '100',
+        'field_change_date_2': '2', # '2' = Last 30 Days (hardcoded filter on server side)
+        'length': '100',            # Fetch 100 items (usually sufficient for weekly checks)
+        'start': '0',
         'view_display_id': 'warning_letter_solr_block',
         'view_name': 'warning_letter_solr_index',
         'view_path': '/inspections-compliance-enforcement-and-criminal-investigations/compliance-actions-and-activities/warning-letters',
         '_drupal_ajax': '1',
-        'view_dom_id': view_dom_id,
-        '_': int(datetime.now().timestamp() * 1000)
+        '_': int(time.time() * 1000)
     }
-    
+    if view_dom_id:
+        params['view_dom_id'] = view_dom_id
+
+    # 4. Fetch Data
     try:
-        logging.info(f"Attempting direct API call with session token...")
-        response = session.get(FDA_AJAX_URL, headers=HEADERS, params=params, timeout=120, impersonate="chrome110")
+        logging.info("Fetching data from FDA AJAX endpoint...")
+        response = session.get(FDA_AJAX_URL, params=params, timeout=60)
         response.raise_for_status()
-        json_data = response.json()
-        logging.info(f"API call successful. Received {len(json_data.get('data',[]))} records.")
-        return json_data
-    except (requests.errors.RequestsError, json.JSONDecodeError) as e:
-        logging.error(f"Direct API call failed: {e}", exc_info=True)
+        json_content = response.json()
+    except Exception as e:
+        logging.error(f"FDA API request failed: {e}")
         return None
 
-def parse_fda_letters(api_response: dict):
-    if not isinstance(api_response, dict) or 'data' not in api_response or not isinstance(api_response.get('data'), list):
-        logging.error("Structural error: API response is malformed or missing the 'data' list.")
-        return None
-
-    parsed_data = []
-    for row in api_response.get('data', []):
-        try:
-            soup_posted = BeautifulSoup(row[0], 'lxml')
-            posted_time_tag = soup_posted.find('time')
-            soup_issue = BeautifulSoup(row[1], 'lxml')
-            issue_time_tag = soup_issue.find('time')
-            soup_company = BeautifulSoup(row[2], 'lxml')
-            company_link = soup_company.find('a')
-            
-            record = {
-                "posted_date": posted_time_tag['datetime'].split('T')[0] if posted_time_tag else None,
-                "issue_date": issue_time_tag['datetime'].split('T')[0] if issue_time_tag else None,
-                "company_name": company_link.get_text(strip=True) if company_link else row[2],
-                "issuing_office": BeautifulSoup(row[3], 'lxml').get_text(strip=True),
-                "subject": BeautifulSoup(row[4], 'lxml').get_text(strip=True),
-                "letter_url": f"{FDA_BASE_URL}{company_link['href']}" if company_link else None,
-            }
-            parsed_data.append(record)
-        except Exception:
-            logging.warning(f"Skipping a malformed FDA row.", exc_info=True)
-    logging.info(f"Successfully parsed {len(parsed_data)} FDA letters.")
-    return parsed_data
-
-def check_for_updates(days_to_check: int = 7):
-    logging.info("Starting FDA letter update check using two-step API approach.")
-    
-    with requests.Session() as session:
-        view_dom_id = _get_view_dom_id(session)
-        if not view_dom_id:
-            logging.error("FDA check failed: could not acquire session token.")
-            return None
-
-        json_content = _fetch_recent_letters_from_api(session, view_dom_id)
-    
-    if json_content is None:
-        return None
-
+    # 5. Parse Data
     all_recent_letters = parse_fda_letters(json_content)
-    if all_recent_letters is None:
-        return None
-
+    
+    # 6. Filter by requested days (Logic from original script)
     cutoff_date = datetime.now() - timedelta(days=days_to_check)
     filtered_letters = [
         letter for letter in all_recent_letters
@@ -125,16 +228,25 @@ def check_for_updates(days_to_check: int = 7):
     return {"data": filtered_letters, "source_url": FDA_WL_PAGE_URL}
 
 if __name__ == "__main__":
+    # CLI Test Block
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+    
     result_package = check_for_updates(days_to_check=7)
-    if result_package:
+    
+    if result_package and result_package.get("data"):
         logging.info(f"Test run successful. Found {len(result_package['data'])} records.")
+        
         output_dir = "exports"
         os.makedirs(output_dir, exist_ok=True)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f"fda_letters_{timestamp}.json"
+        
         with open(os.path.join(output_dir, filename), "w") as f:
             json.dump(result_package, f, indent=4)
         logging.info(f"Saved package to {os.path.join(output_dir, filename)}")
+        
+        # Print sample
+        if len(result_package['data']) > 0:
+            print(json.dumps(result_package['data'][0], indent=2))
     else:
-        logging.error("Test run failed.")
+        logging.error("Test run failed or found no records.")
