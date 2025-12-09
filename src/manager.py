@@ -11,7 +11,7 @@ def run_all_checks_and_notify():
     logging.info("Manager: Starting orchestration.")
 
     try:
-        days_to_check = int(os.environ.get("DAYS_TO_CHECK", "3"))
+        days_to_check = int(os.environ.get("DAYS_TO_CHECK", "7"))
     except (ValueError, TypeError):
         logging.warning("Manager: Invalid DAYS_TO_CHECK value. Defaulting to 7.")
         days_to_check = 7

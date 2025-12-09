@@ -2,6 +2,7 @@ import os
 import json
 import logging
 import time
+import re
 from datetime import datetime, timedelta
 
 import requests
@@ -63,7 +64,11 @@ def parse_cdsco_table(html_content: str):
 
                 record["s_no"] = cells[0].get_text(strip=True)
                 record["wc_number"] = cells[1].get_text(strip=True)
-                record["company_name"] = cells[2].get_text(strip=True)
+                
+                # CLEANING: Remove "M/s." or "M/s " prefix case-insensitively
+                raw_company = cells[2].get_text(strip=True)
+                record["company_name"] = re.sub(r'^M/s\.?\s*', '', raw_company, flags=re.IGNORECASE)
+
                 record["products"] = cells[3].get_text(strip=True)
                 record["download_pdf_link"] = f"{CDSCO_BASE_URL}{link_tag['href']}" if link_tag else ""
                 record["pdf_size"] = cells[6].get_text(strip=True)
